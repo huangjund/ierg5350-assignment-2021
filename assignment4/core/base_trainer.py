@@ -21,7 +21,7 @@ from torch.distributions import Categorical
 current_dir = osp.join(osp.abspath(osp.dirname(__file__)))
 sys.path.append(current_dir)
 sys.path.append(osp.dirname(current_dir))
-print(current_dir)
+# print(current_dir)
 
 from envs import make_envs
 
@@ -103,13 +103,13 @@ class BaseTrainer:
             # [TODO] Get the actions and the log probability of the action from the output of neural network.
             # Please use normal distribution.
             means, log_std, values = self.model(obs)
-            pass
+            dist = torch.distributions.Normal(means, torch.exp(log_std))
             if deterministic:  # Use the means as the action
-                actions = None
+                actions = means
             else:
-                actions = None
-            action_log_probs = None
-
+                actions = dist.sample()
+            action_log_probs_raw = dist.log_prob(actions)
+            action_log_probs = action_log_probs_raw.sum(axis=-1)
             actions = actions.view(-1, self.num_actions)
 
         values = values.view(-1, 1)
@@ -143,7 +143,7 @@ class BaseTrainer:
         values = values.view(-1, 1)
         action_log_probs = action_log_probs.view(-1, 1)
 
-        return values, action_log_probs, dist_entropy
+        return values, action_log_probs, dist_entropy.mean()
 
     def compute_values(self, obs):
         """Compute the values corresponding to current policy at current

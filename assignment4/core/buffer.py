@@ -60,7 +60,8 @@ class A2CRolloutStorage:
             #  3. self.rewards stores the rewards at each timestep.
 
             # self.returns[step] = None
-            pass
+            self.returns[step] = self.rewards[step] + gamma * self.returns[step+1] \
+                                 * self.masks[step+1]
 
 
 class PPORolloutStorage(A2CRolloutStorage):
@@ -106,7 +107,10 @@ class PPORolloutStorage(A2CRolloutStorage):
                 #  5. Check the notebook for more information.
 
                 # self.returns[step] = None
-                pass
+                delta = self.rewards[step] + gamma * self.value_preds[step + 1] * self.masks[step + 1] - \
+                        self.value_preds[step]
+                gae = delta + gamma * self.gae_lambda * self.masks[step + 1] * gae
+                self.returns[step] = gae + self.value_preds[step]
 
         else:
             # We don't test this case

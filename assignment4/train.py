@@ -164,10 +164,8 @@ def train(args):
                 #   2. trainer.rollouts is a storage containing all data
                 #   3. Pass current observations to compute_action
                 #   4. Since we are using stacked environments, please pay attention to the shape of each type of data
-                values = None
-                actions = None
-                action_log_prob = None
-                pass
+                with torch.no_grad():
+                    values, actions, action_log_prob = trainer.compute_action(trainer.rollouts.observations[index])
 
                 # actions is a torch tensor, so we need to turn it into numpy array.
                 cpu_actions = actions.cpu().numpy()
@@ -231,20 +229,26 @@ def train(args):
             )
 
             progress.append(stats)
-            pretty_print({
-                "===== {} Training Iteration {} =====".format(
-                    algo, iteration): stats
-            })
+            # pretty_print({
+            #     "===== {} Training Iteration {} =====".format(
+            #         algo, iteration): stats
+            # })
+            print("Steps: {}， Episode_reward_mean: {}， Success Rate: {}".format(stats['iteration'],
+                                                                                stats["training_episode_reward"]["episode_reward_mean"],
+                                                                                stats["success_rate"]["success_rate_mean"]))
+            progress_path = save_progress(log_dir, progress)
 
         if iteration % config.save_freq == 0:
             trainer_path = trainer.save_w(log_dir, "iter{}".format(iteration))
             progress_path = save_progress(log_dir, progress)
-            print("Saved trainer state at <{}>. Saved progress at <{}>.".format(
-                trainer_path, progress_path
-            ))
+            # print("Saved trainer state at <{}>. Saved progress at <{}>.".format(
+            #     trainer_path, progress_path
+            # ))
 
         if total_steps > int(args.max_steps):
             break
+        # if iteration > int(args.max_steps):
+        #     break
 
         iteration += 1
 

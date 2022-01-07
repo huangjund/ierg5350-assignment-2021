@@ -18,8 +18,8 @@ class A2CConfig(object):
     def __init__(self):
         # Common
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.save_freq = 50
-        self.log_freq = 5
+        self.save_freq = 1
+        self.log_freq = 1
         self.num_envs = 1
 
         # Sample
@@ -27,8 +27,8 @@ class A2CConfig(object):
 
         # Learning
         self.gamma = 0.99
-        self.lr = 7e-4
-        self.grad_norm_max = 0.5
+        self.lr = 5e-4#7e-4
+        self.grad_norm_max = 0.5#0.5 / 10.
         self.entropy_loss_weight = 0.01
         self.value_loss_weight = 0.5
 
@@ -62,19 +62,16 @@ class A2CTrainer(BaseTrainer):
         action_log_probs = action_log_probs.view(num_steps, num_processes, 1)
 
         # [TODO] Get the unnormalized advantages
-        advantages = None
-        pass
-
+        advantages = rollouts.returns[:-1] - values
         advantages_mean = advantages.mean().item()  # Used to record statistics
+        # advantages = (advantages - advantages_mean) / max(advantages.std().item(), 1e-4)
+
 
         # [TODO] Get the value loss
-        value_loss = None
-        pass
+        value_loss = advantages.pow(2).mean()
 
         # [TODO] Get the policy loss
-        policy_loss = None
-        pass
-
+        policy_loss = -(advantages.detach() * action_log_probs).mean()
 
         # print(
         #     "Log Prob Mean: ", action_log_probs.mean().item(),
@@ -94,9 +91,11 @@ class A2CTrainer(BaseTrainer):
         total_loss, action_loss, value_loss, dist_entropy, adv = self.compute_loss(rollout)
         # [TODO] Step self.optimizer by computing the gradient of total loss
         # Hint: remember to clip the gradient to self.grad_norm_max and set the gradient norm to variable norm.
-        norm = None
-        pass
-
+        norm = self.grad_norm_max
+        self.optimizer.zero_grad()
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), norm)
+        self.optimizer.step()
 
         return action_loss.item(), value_loss.item(), dist_entropy.item(), \
-               total_loss.item(), norm.item(), adv, 0.0
+               total_loss.item(), norm, adv, 0.0

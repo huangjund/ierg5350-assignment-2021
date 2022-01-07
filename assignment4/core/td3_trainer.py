@@ -6,6 +6,7 @@ import copy
 import os
 import os.path as osp
 import sys
+from collections import deque
 
 import gym
 import numpy as np
@@ -16,9 +17,10 @@ import torch.nn.functional as F
 current_dir = osp.join(osp.abspath(osp.dirname(__file__)))
 sys.path.append(current_dir)
 sys.path.append(osp.dirname(current_dir))
-print(current_dir)
+# print(current_dir)
 
 from envs import make_envs
+from utils import summary, save_progress
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -152,9 +154,12 @@ class TD3Trainer:
 
         # [TODO] Following the TODOs below to implement critic loss
         with torch.no_grad():
+            noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)
+            next_action = (self.actor_target(next_state) + noise).clamp(-self.max_action, self.max_action)
             # Compute the target Q value
-            target_Q = None
-            pass
+            target_Q1, target_Q2 = self.critic_target(next_state, next_action)
+            target_Q = torch.min(target_Q1, target_Q2)
+            target_Q = reward + not_done * self.discount * target_Q
 
         # Get current Q estimates
         current_Q1, current_Q2 = self.critic(state, action)
@@ -171,8 +176,7 @@ class TD3Trainer:
         if self.total_it % self.policy_freq == 0:
 
             # [TODO] Compute actor loss
-            actor_loss = None
-            pass
+            actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
 
             # Optimize the actor
             self.actor_optimizer.zero_grad()
@@ -239,6 +243,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--start_timesteps", default=1e4, type=int)  # Time steps initial random policy is used
     parser.add_argument("--save_freq", default=5e3, type=int)  # How often (time steps) we save model
+    parser.add_argument("--log_freq", default=1000, type=int)  # How often (time steps) we save model
     parser.add_argument("--max_timesteps", default=1e6, type=int)  # Max time steps to run environment
     parser.add_argument("--expl_noise", default=0.1)  # Std of Gaussian exploration noise
     parser.add_argument("--batch_size", default=256, type=int)  # Batch size for both actor and critic
@@ -260,11 +265,17 @@ if __name__ == "__main__":
     if not os.path.exists(osp.join(log_dir, "models")):
         os.makedirs(osp.join(log_dir, "models"))
 
+    # Setup some stats helpers
+    success_recorder = deque(maxlen=100)
+    reward_recorder = deque(maxlen=100)
+    progress=[]
+    total_steps = 0
+
     environments = make_envs(
         env_id=args.env_id,
         log_dir=log_dir,
-        num_envs=1,
-        asynchronous=False,
+        num_envs=1, # only 1 env is enabled
+        asynchronous=True,
     )
     env = environments.envs[0]
 
@@ -316,7 +327,7 @@ if __name__ == "__main__":
             ).clip(-max_action, max_action)
 
         # Perform action
-        next_state, reward, done, _ = env.step(action)
+        next_state, reward, done, info = env.step(action)
         done_bool = float(done)  # if episode_timesteps < env._max_episode_steps else 0
 
         if args.load_model:
@@ -335,13 +346,32 @@ if __name__ == "__main__":
 
         if done:
             # +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-            print(
-                f"Total T: {t + 1} Episode Num: {episode_num + 1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
+            # record stats
+            reward_recorder.append(episode_reward)
+            if "arrive_dest" in info:
+                success_recorder.append(info["arrive_dest"])
+            # print(
+            #     f"Total T: {t + 1} Episode Num: {episode_num + 1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
             # Reset environment
             state, done = env.reset(), False
             episode_reward = 0
             episode_timesteps = 0
             episode_num += 1
+        total_steps = (t+1)
+
+        if (t + 1) % args.log_freq == 0:
+            stats = dict(
+                training_episode_reward=summary(reward_recorder, "episode_reward"),
+                success_rate=summary(success_recorder, "success_rate"),
+                total_steps=total_steps
+            )
+            print("Total Steps: {}, Reward Mean: {}, Success Rate: {}".format(stats['total_steps'],
+                                                                              stats["training_episode_reward"]["episode_reward_mean"],
+                                                                              stats["success_rate"]["success_rate_mean"]))
+            progress.append(stats)
+            save_progress(log_dir, progress)
 
         if (t + 1) % args.save_freq == 0:
             policy.save(f"{log_dir}/models/default")
+
+
